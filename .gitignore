@@ -1,0 +1,29 @@
+node_modules/
+dist/
+build/
+.env
+.env.local
+*.log
+.DS_Store
+Thumbs.db
+
+# SQLite local data
+data/
+prisma/*.db
+prisma/*.db-journal
+db/*.db
+db/*.db-shm
+db/*.db-wal
+
+# Deployment artifacts
+staging/
+deploy-staging*/
+deploy*.zip
+app_logs/
+app_logs.zip
+docker_logs/
+docker_logs.zip
+
+# IDE
+.vscode/
+.idea/
