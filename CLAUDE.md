@@ -2,6 +2,9 @@
 
 Internal compliance operations site for Hill Country Cider House. Used for TABC monthly reporting.
 
+**GitHub**: https://github.com/boyofgreen/hcch-ops  
+**Azure**: https://hccc-ops.azurewebsites.net
+
 ## Project Structure
 
 ```
