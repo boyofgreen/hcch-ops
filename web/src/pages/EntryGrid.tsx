@@ -1,57 +1,58 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type EntryRow, type Location } from "../api";
 
-const LOCK_ICON    = "🔒";
-const UNLOCK_ICON  = "🔓";
+// ─── Constants ────────────────────────────────────────────────────────────────
 
-const MONTHS = [
-  "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
-];
+const MONTHS_LONG  = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
-const BOTTLE_GALLONS = 750 / 3785.411784; // 750 mL per bottle
-const SIXTEL_GALLONS = 5.16;              // sixtel keg
+const BOTTLE_GALLONS = 750 / 3785.411784;
+const SIXTEL_GALLONS = 5.16;
 
 function toGal(bottles: number, kegs: number) {
   return Math.round((bottles * BOTTLE_GALLONS + kegs * SIXTEL_GALLONS) * 100) / 100;
 }
 
-type Props = { locationSlug: string; year: number; month: number };
+// Location IDs
+const LOC_CIDER_HOUSE  = 1; // Comfort / CF / terracotta
+const LOC_TASTING_ROOM = 2; // Castroville / CV / gold
+
+// ─── Field definitions ────────────────────────────────────────────────────────
 
 type EntryFieldKey =
   | "bottlesOnHand" | "kegsOnHand"
-  | "togoBottles" | "togoKegs"
+  | "togoBottles"   | "togoKegs"
   | "retailBottles" | "retailKegs"
-  | "transfersInBottles" | "transfersInKegs"
+  | "transfersInBottles"  | "transfersInKegs"
   | "transfersOutBottles" | "transfersOutKegs";
 
 const ALL_FIELD_COLUMNS: { key: EntryFieldKey; label: string }[] = [
-  { key: "bottlesOnHand",      label: "Bottles on hand" },
-  { key: "kegsOnHand",         label: "Kegs on hand" },
-  { key: "togoBottles",        label: "To-Go bottles" },
-  { key: "togoKegs",           label: "To-Go kegs" },
-  { key: "retailBottles",      label: "Retail bottles" },
-  { key: "retailKegs",         label: "Retail kegs" },
-  { key: "transfersInBottles", label: "Transfer In bottles" },
-  { key: "transfersInKegs",    label: "Transfer In kegs" },
-  { key: "transfersOutBottles",label: "Transfer Out bottles" },
-  { key: "transfersOutKegs",   label: "Transfer Out kegs" },
+  { key: "bottlesOnHand",       label: "On Hand (btl)" },
+  { key: "kegsOnHand",          label: "On Hand (keg)" },
+  { key: "retailBottles",       label: "Sales (btl)" },
+  { key: "retailKegs",          label: "Sales (keg)" },
+  { key: "togoBottles",         label: "To-Go (btl)" },
+  { key: "togoKegs",            label: "To-Go (keg)" },
+  { key: "transfersInBottles",  label: "Xfer In (btl)" },
+  { key: "transfersInKegs",     label: "Xfer In (keg)" },
+  { key: "transfersOutBottles", label: "Xfer Out (btl)" },
+  { key: "transfersOutKegs",    label: "Xfer Out (keg)" },
 ];
 
-const HIDDEN_FIELDS: Record<string, EntryFieldKey[]> = {
-  "cider-house": ["togoKegs", "transfersInBottles", "transfersInKegs"],
-  "tasting-room": ["togoKegs", "kegsOnHand", "retailBottles", "retailKegs", "transfersOutBottles", "transfersOutKegs"],
+const HIDDEN_FIELDS: Record<number, EntryFieldKey[]> = {
+  [LOC_CIDER_HOUSE]:  ["togoKegs", "transfersInBottles", "transfersInKegs"],
+  [LOC_TASTING_ROOM]: ["togoKegs", "kegsOnHand", "retailBottles", "retailKegs", "transfersOutBottles", "transfersOutKegs"],
 };
 
-const LABEL_OVERRIDES: Record<string, Partial<Record<EntryFieldKey, string>>> = {
-  "tasting-room": { transfersInKegs: "Transfer In kegs / On-Premise Sales" },
+const LABEL_OVERRIDES: Record<number, Partial<Record<EntryFieldKey, string>>> = {
+  [LOC_TASTING_ROOM]: { transfersInKegs: "Xfer In / On-Prem" },
 };
 
-function columnsForLocation(slug: string) {
-  const hidden = new Set(HIDDEN_FIELDS[slug] ?? []);
-  const overrides = LABEL_OVERRIDES[slug] ?? {};
+function columnsForLocation(locationId: number) {
+  const hidden    = new Set(HIDDEN_FIELDS[locationId] ?? []);
+  const overrides = LABEL_OVERRIDES[locationId] ?? {};
   return ALL_FIELD_COLUMNS
     .filter((c) => !hidden.has(c.key))
     .map((c) => overrides[c.key] ? { ...c, label: overrides[c.key]! } : c);
@@ -62,13 +63,12 @@ function colGallons(key: EntryFieldKey, count: number): number {
   return Math.round(count * (isKeg ? SIXTEL_GALLONS : BOTTLE_GALLONS) * 100) / 100;
 }
 
-// ─── Compliance calculation helpers ──────────────────────────────────────────
+// ─── Compliance calculations ──────────────────────────────────────────────────
 
 function sumField(rows: EntryRow[], key: EntryFieldKey): number {
   return rows.reduce((s, r) => s + ((r.entry?.[key] as number | undefined) ?? 0), 0);
 }
 
-// Cider House
 type CHCalcResult = {
   startingInventory: number;
   endingInventory: number;
@@ -88,7 +88,6 @@ function calcCiderHouseCategory(current: EntryRow[], prev: EntryRow[]): CHCalcRe
   return { startingInventory, endingInventory, directSalesOffPremise, directSalesRetail, transfer, manufacturing };
 }
 
-// Tasting Room
 type TRCalcResult = {
   startingInventory: number;
   endingInventory: number;
@@ -103,179 +102,383 @@ function calcTastingRoomCategory(current: EntryRow[], prev: EntryRow[]): TRCalcR
   const endingInventory       = toGal(sumField(current, "bottlesOnHand"), 0);
   const directSalesOffPremise = toGal(sumField(current, "togoBottles"), 0);
   const transferInBottlesGal  = toGal(sumField(current, "transfersInBottles"), 0);
-  // Adjusted bottle sales: what inventory math says you sold in bottles
   const adjustedBottleSales   = Math.round((startingInventory + transferInBottlesGal - endingInventory) * 100) / 100;
   const directSalesOnPremise  = toGal(0, sumField(current, "transfersInKegs"));
   const transfer              = toGal(sumField(current, "transfersInBottles"), sumField(current, "transfersInKegs"));
   return { startingInventory, endingInventory, directSalesOffPremise, adjustedBottleSales, directSalesOnPremise, transfer };
 }
 
+// ─── Location filter type ─────────────────────────────────────────────────────
+
+type LocFilter = "both" | "cv" | "cf";
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function EntryGrid({ locationSlug, year, month }: Props) {
-  const navigate = useNavigate();
-  const qc = useQueryClient();
+type Props = { year: number; month: number };
+
+export default function EntryGrid({ year, month }: Props) {
+  const navigate   = useNavigate();
+  const qc         = useQueryClient();
+  const [locFilter, setLocFilter] = useState<LocFilter>("both");
 
   const { data: locations } = useQuery({ queryKey: ["locations"], queryFn: api.locations });
-  const location = locations?.find((l) => l.slug === locationSlug);
 
-  const { data: rows, isLoading } = useQuery({
-    queryKey: ["entries", location?.id, year, month],
-    queryFn: () => api.entries(location!.id, year, month),
-    enabled: !!location,
+  const cfLocation = locations?.find((l) => l.id === LOC_CIDER_HOUSE);
+  const cvLocation = locations?.find((l) => l.id === LOC_TASTING_ROOM);
+
+  // Fetch entries for both locations
+  const { data: cfRows, isLoading: cfLoading } = useQuery({
+    queryKey: ["entries", LOC_CIDER_HOUSE, year, month],
+    queryFn: () => api.entries(LOC_CIDER_HOUSE, year, month),
+    enabled: !!cfLocation,
+  });
+  const { data: cvRows, isLoading: cvLoading } = useQuery({
+    queryKey: ["entries", LOC_TASTING_ROOM, year, month],
+    queryFn: () => api.entries(LOC_TASTING_ROOM, year, month),
+    enabled: !!cvLocation,
   });
 
-  // Previous month — needed for Starting Inventory in both compliance calcs
+  // Previous month for starting inventory
   const prevYear  = month === 1 ? year - 1 : year;
   const prevMonth = month === 1 ? 12 : month - 1;
-  const { data: prevRows } = useQuery({
-    queryKey: ["entries", location?.id, prevYear, prevMonth],
-    queryFn: () => api.entries(location!.id, prevYear, prevMonth),
-    enabled: !!location,
+
+  const { data: cfPrevRows } = useQuery({
+    queryKey: ["entries", LOC_CIDER_HOUSE, prevYear, prevMonth],
+    queryFn: () => api.entries(LOC_CIDER_HOUSE, prevYear, prevMonth),
+    enabled: !!cfLocation,
+  });
+  const { data: cvPrevRows } = useQuery({
+    queryKey: ["entries", LOC_TASTING_ROOM, prevYear, prevMonth],
+    queryFn: () => api.entries(LOC_TASTING_ROOM, prevYear, prevMonth),
+    enabled: !!cvLocation,
   });
 
-  // Lock status
-  const { data: lockData } = useQuery({
-    queryKey: ["lock", location?.id, year, month],
-    queryFn: () => api.lockStatus(location!.id, year, month),
-    enabled: !!location,
+  // Lock status for both
+  const { data: cfLockData } = useQuery({
+    queryKey: ["lock", LOC_CIDER_HOUSE, year, month],
+    queryFn: () => api.lockStatus(LOC_CIDER_HOUSE, year, month),
+    enabled: !!cfLocation,
   });
-  const locked = lockData?.locked ?? false;
+  const { data: cvLockData } = useQuery({
+    queryKey: ["lock", LOC_TASTING_ROOM, year, month],
+    queryFn: () => api.lockStatus(LOC_TASTING_ROOM, year, month),
+    enabled: !!cvLocation,
+  });
 
-  const lockToggle = useMutation({
-    mutationFn: () =>
-      locked
-        ? api.unlockMonth(location!.id, year, month)
-        : api.lockMonth(location!.id, year, month),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["lock", location?.id, year, month] });
-    },
+  const cfLocked = cfLockData?.locked ?? false;
+  const cvLocked = cvLockData?.locked ?? false;
+
+  const cfLockToggle = useMutation({
+    mutationFn: () => cfLocked
+      ? api.unlockMonth(LOC_CIDER_HOUSE, year, month)
+      : api.lockMonth(LOC_CIDER_HOUSE, year, month),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["lock", LOC_CIDER_HOUSE, year, month] }),
+  });
+  const cvLockToggle = useMutation({
+    mutationFn: () => cvLocked
+      ? api.unlockMonth(LOC_TASTING_ROOM, year, month)
+      : api.lockMonth(LOC_TASTING_ROOM, year, month),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["lock", LOC_TASTING_ROOM, year, month] }),
   });
 
   const save = useMutation({
     mutationFn: api.saveEntry,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["entries", location?.id, year, month] });
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ["entries", vars.locationId, year, month] });
     },
   });
-
-  if (!locations) return <p>Loading…</p>;
-  if (!location)  return <p>Location not found.</p>;
-  if (isLoading || !rows) return <p>Loading entries…</p>;
-
-  const columns       = columnsForLocation(locationSlug);
-  const lowRows       = rows.filter((r) => r.cider.category === "low");
-  const sparklingRows = rows.filter((r) => r.cider.category === "sparkling");
-
-  const prevLow       = prevRows?.filter((r) => r.cider.category === "low") ?? [];
-  const prevSparkling = prevRows?.filter((r) => r.cider.category === "sparkling") ?? [];
 
   function goMonth(delta: number) {
     let m = month + delta, y = year;
     if (m < 1)  { m = 12; y -= 1; }
     if (m > 12) { m = 1;  y += 1; }
-    navigate(`/compliance/${locationSlug}/${y}/${m}`);
+    navigate(`/entry/${y}/${m}`);
   }
 
-  const tables = (
-    <div className="space-y-6 min-w-0 flex-1">
-      <CategoryTable title="Low ABV"   rows={lowRows}       columns={columns} location={location} year={year} month={month} onSave={save.mutate} saving={save.isPending} locked={locked} />
-      <CategoryTable title="Sparkling" rows={sparklingRows} columns={columns} location={location} year={year} month={month} onSave={save.mutate} saving={save.isPending} locked={locked} />
-    </div>
-  );
+  const isLoading = cfLoading || cvLoading || !locations;
+
+  if (isLoading) {
+    return (
+      <div style={{ padding: "40px 36px", fontFamily: "var(--sans)", color: "var(--ink-3)" }}>
+        Loading…
+      </div>
+    );
+  }
+
+  // Partition rows by category
+  const cfLow       = cfRows?.filter((r) => r.cider.category === "low")       ?? [];
+  const cfSparkling = cfRows?.filter((r) => r.cider.category === "sparkling")  ?? [];
+  const cvLow       = cvRows?.filter((r) => r.cider.category === "low")        ?? [];
+  const cvSparkling = cvRows?.filter((r) => r.cider.category === "sparkling")  ?? [];
+
+  const cfPrevLow       = cfPrevRows?.filter((r) => r.cider.category === "low")       ?? [];
+  const cfPrevSparkling = cfPrevRows?.filter((r) => r.cider.category === "sparkling")  ?? [];
+  const cvPrevLow       = cvPrevRows?.filter((r) => r.cider.category === "low")        ?? [];
+  const cvPrevSparkling = cvPrevRows?.filter((r) => r.cider.category === "sparkling")  ?? [];
+
+  const cfColumns = columnsForLocation(LOC_CIDER_HOUSE);
+  const cvColumns = columnsForLocation(LOC_TASTING_ROOM);
+
+  const showCF = locFilter === "both" || locFilter === "cf";
+  const showCV = locFilter === "both" || locFilter === "cv";
+
+  // Determine which lock toggle button to show based on filter
+  const activeLockToggle = locFilter === "cv"
+    ? { locked: cvLocked, toggle: () => cvLockToggle.mutate(), pending: cvLockToggle.isPending }
+    : locFilter === "cf"
+    ? { locked: cfLocked, toggle: () => cfLockToggle.mutate(), pending: cfLockToggle.isPending }
+    : null; // "both" — show per-zone
+
+  const now = new Date();
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <Link to="/" className="text-sm text-stone-500 hover:underline">← All locations</Link>
-          <h1 className="text-2xl font-semibold mt-1 flex items-center gap-2">
-            {location.name}
-            {locked && <span className="text-sm font-normal px-2 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-200">Locked</span>}
-          </h1>
+    <div className="hcc-entry-layout">
+      {/* ── LEFT RAIL ── */}
+      <aside className="hcc-entry-rail">
+        {/* Month strip */}
+        <MonthStrip year={year} activeMonth={month - 1} onSelect={(i) => {
+          const now2 = new Date();
+          const isFuture = year > now2.getFullYear() || (year === now2.getFullYear() && i > now2.getMonth());
+          if (!isFuture) navigate(`/entry/${year}/${i + 1}`);
+        }} onPrevYear={() => navigate(`/entry/${year - 1}/${month}`)}
+           onNextYear={() => {
+             if (year < now.getFullYear()) navigate(`/entry/${year + 1}/${month}`);
+           }}
+        />
+
+        {/* Lock buttons for current filter */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {(locFilter === "both" || locFilter === "cf") && cfLocation && (
+            <button
+              className={`hcc-btn sm ${cfLocked ? "gold" : "ghost"}`}
+              onClick={() => cfLockToggle.mutate()}
+              disabled={cfLockToggle.isPending}
+            >
+              {cfLocked ? "🔒" : "🔓"}
+              <span style={{ color: "var(--terracotta)" }}>CF</span>
+              {cfLocked ? " Locked" : " Lock Comfort"}
+            </button>
+          )}
+          {(locFilter === "both" || locFilter === "cv") && cvLocation && (
+            <button
+              className={`hcc-btn sm ${cvLocked ? "gold" : "ghost"}`}
+              onClick={() => cvLockToggle.mutate()}
+              disabled={cvLockToggle.isPending}
+            >
+              {cvLocked ? "🔒" : "🔓"}
+              <span style={{ color: "var(--gold-deep)" }}>CV</span>
+              {cvLocked ? " Locked" : " Lock Castroville"}
+            </button>
+          )}
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => goMonth(-1)} className="px-3 py-1.5 rounded border border-stone-300 bg-white hover:bg-stone-100">←</button>
-          <div className="px-3 py-1.5 font-medium min-w-[10rem] text-center">{MONTHS[month - 1]} {year}</div>
-          <button onClick={() => goMonth(1)}  className="px-3 py-1.5 rounded border border-stone-300 bg-white hover:bg-stone-100">→</button>
-          <button
-            onClick={() => lockToggle.mutate()}
-            disabled={lockToggle.isPending}
-            title={locked ? "Unlock this month" : "Lock this month"}
-            className={`px-3 py-1.5 rounded border text-sm font-medium transition ${
-              locked
-                ? "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
-                : "border-stone-300 bg-white text-stone-600 hover:bg-stone-100"
-            } disabled:opacity-50`}
-          >
-            {locked ? `${UNLOCK_ICON} Unlock` : `${LOCK_ICON} Lock`}
-          </button>
-          <Link to={`/compliance/${locationSlug}/${year}/${month}/report`} className="px-4 py-1.5 rounded bg-stone-900 text-white text-sm hover:bg-stone-800">
-            View report
-          </Link>
+
+        {/* Compliance calc panels — always both, regardless of location filter */}
+        {cfLocation && (
+          <CiderHouseCalc
+            lowCurrent={cfLow}       lowPrev={cfPrevLow}
+            sparklingCurrent={cfSparkling} sparklingPrev={cfPrevSparkling}
+            month={month} year={year}
+          />
+        )}
+        {cvLocation && (
+          <TastingRoomCalc
+            lowCurrent={cvLow}       lowPrev={cvPrevLow}
+            sparklingCurrent={cvSparkling} sparklingPrev={cvPrevSparkling}
+            month={month} year={year}
+          />
+        )}
+      </aside>
+
+      {/* ── MAIN CONTENT ── */}
+      <div className="hcc-entry-main">
+        {/* Topbar */}
+        <div className="hcc-topbar">
+          <div>
+            <div className="eyebrow">Operations · Monthly Entry</div>
+            <h1>{MONTHS_LONG[month - 1]} {year}</h1>
+            <div className="sub">
+              Cider House &amp; Tasting Room · <em>monthly inventory</em>
+            </div>
+          </div>
+          <div className="hcc-actions">
+            <button className="hcc-btn ghost sm" onClick={() => goMonth(-1)}>← Prev</button>
+            <button className="hcc-btn ghost sm" onClick={() => goMonth(1)}>Next →</button>
+          </div>
+        </div>
+
+        {/* Filter bar */}
+        <div className="hcc-filterbar">
+          <div className="tabs">
+            <button
+              className={locFilter === "both" ? "active" : ""}
+              onClick={() => setLocFilter("both")}
+            >
+              Both Locations
+            </button>
+            <button
+              className={locFilter === "cv" ? "active" : ""}
+              onClick={() => setLocFilter("cv")}
+            >
+              <span className="loc-dot" style={{ width: 7, height: 7, background: "var(--gold)", borderRadius: "50%" }} />
+              Castroville (CV)
+            </button>
+            <button
+              className={locFilter === "cf" ? "active" : ""}
+              onClick={() => setLocFilter("cf")}
+            >
+              <span className="loc-dot" style={{ width: 7, height: 7, background: "var(--terracotta)", borderRadius: "50%" }} />
+              Comfort (CF)
+            </button>
+          </div>
+        </div>
+
+        {/* Entry zones */}
+        <div className="hcc-content">
+          {showCF && cfLocation && (
+            <LocationZone
+              locationCode="CF"
+              locationName="Comfort · Cider House"
+              zoneClass="zone cf"
+              locked={cfLocked}
+              rows={cfLow}
+              sparklingRows={cfSparkling}
+              columns={cfColumns}
+              location={cfLocation}
+              year={year} month={month}
+              onSave={save.mutate}
+              saving={save.isPending}
+            />
+          )}
+
+          {showCV && cvLocation && (
+            <LocationZone
+              locationCode="CV"
+              locationName="Castroville · Tasting Room"
+              zoneClass="zone cv"
+              locked={cvLocked}
+              rows={cvLow}
+              sparklingRows={cvSparkling}
+              columns={cvColumns}
+              location={cvLocation}
+              year={year} month={month}
+              onSave={save.mutate}
+              saving={save.isPending}
+            />
+          )}
         </div>
       </div>
-
-      {/* Body — left rail for both locations */}
-      {(locationSlug === "cider-house" || locationSlug === "tasting-room") ? (
-        <div className="flex gap-5 items-start">
-          <aside className="w-64 shrink-0 space-y-4 sticky top-4">
-            {locationSlug === "cider-house" ? (
-              <CiderHouseCalc
-                lowCurrent={lowRows}       lowPrev={prevLow}
-                sparklingCurrent={sparklingRows} sparklingPrev={prevSparkling}
-                month={month} year={year}
-              />
-            ) : (
-              <TastingRoomCalc
-                lowCurrent={lowRows}       lowPrev={prevLow}
-                sparklingCurrent={sparklingRows} sparklingPrev={prevSparkling}
-                month={month} year={year}
-              />
-            )}
-          </aside>
-          {tables}
-        </div>
-      ) : tables}
     </div>
+  );
+}
+
+// ─── Location zone ────────────────────────────────────────────────────────────
+
+function LocationZone(props: {
+  locationCode: "CF" | "CV";
+  locationName: string;
+  zoneClass: string;
+  locked: boolean;
+  rows: EntryRow[];
+  sparklingRows: EntryRow[];
+  columns: { key: EntryFieldKey; label: string }[];
+  location: Location;
+  year: number;
+  month: number;
+  onSave: (payload: any) => void;
+  saving: boolean;
+}) {
+  const { locationCode, locationName, zoneClass, locked, rows, sparklingRows, columns, location, year, month, onSave, saving } = props;
+  const isCF = locationCode === "CF";
+
+  return (
+    <section className={zoneClass}>
+      <header className="zone-head">
+        <div className="left">
+          <div>
+            <div className="zone-tag">{locationCode} · Inventory</div>
+            <h2>{locationName}</h2>
+          </div>
+        </div>
+        <div className="zone-head right" style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {locked && (
+            <span className="hcc-badge locked">🔒 Locked</span>
+          )}
+          {saving && (
+            <span style={{ fontSize: 11, color: "var(--ink-mute)", fontFamily: "var(--sans)" }}>Saving…</span>
+          )}
+          <span
+            className="hcc-chip"
+            style={{
+              background: isCF ? "rgba(182,90,60,0.1)" : "rgba(201,161,74,0.1)",
+              color: isCF ? "var(--terracotta-deep)" : "var(--gold-deep)",
+              borderColor: isCF ? "rgba(182,90,60,0.35)" : "rgba(201,161,74,0.4)",
+            }}
+          >
+            {locationCode}
+          </span>
+        </div>
+      </header>
+
+      <div className="zone-body tight">
+        {/* Low ABV table */}
+        <div style={{ padding: "18px 0 0" }}>
+          <div style={{
+            padding: "0 24px 10px",
+            fontFamily: "var(--sans)",
+            fontSize: 10,
+            letterSpacing: "0.22em",
+            textTransform: "uppercase" as const,
+            color: "var(--ink-mute)",
+            fontWeight: 700,
+          }}>
+            Low ABV
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <CategoryTable
+              rows={rows}
+              columns={columns}
+              location={location}
+              year={year} month={month}
+              onSave={onSave}
+              saving={saving}
+              locked={locked}
+            />
+          </div>
+        </div>
+
+        {/* Sparkling table */}
+        <div style={{ padding: "18px 0 0", borderTop: "1px solid var(--rule)" }}>
+          <div style={{
+            padding: "0 24px 10px",
+            fontFamily: "var(--sans)",
+            fontSize: 10,
+            letterSpacing: "0.22em",
+            textTransform: "uppercase" as const,
+            color: "var(--ink-mute)",
+            fontWeight: 700,
+          }}>
+            Sparkling
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <CategoryTable
+              rows={sparklingRows}
+              columns={columns}
+              location={location}
+              year={year} month={month}
+              onSave={onSave}
+              saving={saving}
+              locked={locked}
+            />
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
 // ─── Compliance calc panels ───────────────────────────────────────────────────
 
 type CalcRow = { label: string; value: number; derived?: boolean };
-
-function CalcPanel({ title, month, year, children }: {
-  title: string; month: number; year: number; children: ReactNode;
-}) {
-  return (
-    <>
-      <div className="text-xs font-semibold uppercase tracking-wide text-stone-500 px-1">
-        Compliance — {MONTHS[month - 1]} {year}
-      </div>
-      {children}
-    </>
-  );
-}
-
-function CalcBox({ title, rows }: { title: string; rows: CalcRow[] }) {
-  return (
-    <div className="bg-white border border-stone-200 rounded-lg overflow-hidden text-sm">
-      <div className="px-3 py-2 bg-stone-50 border-b border-stone-200 font-medium">{title}</div>
-      <div className="divide-y divide-stone-100">
-        {rows.map(({ label, value, derived }) => (
-          <div key={label} className={`flex justify-between items-baseline px-3 py-1.5 ${derived ? "bg-amber-50" : ""}`}>
-            <span className={`text-xs ${derived ? "font-semibold text-amber-800" : "text-stone-600"}`}>{label}</span>
-            <span className={`tabular-nums font-medium ${derived ? "text-amber-900" : "text-stone-800"}`}>
-              {value.toFixed(2)}<span className="text-stone-400 font-normal text-xs"> gal</span>
-            </span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 function CiderHouseCalc({ lowCurrent, lowPrev, sparklingCurrent, sparklingPrev, month, year }: {
   lowCurrent: EntryRow[]; lowPrev: EntryRow[];
@@ -291,7 +494,7 @@ function CiderHouseCalc({ lowCurrent, lowPrev, sparklingCurrent, sparklingPrev, 
     { label: "Manufacturing",            value: c.manufacturing, derived: true },
   ];
   return (
-    <CalcPanel title="Cider House" month={month} year={year}>
+    <CalcPanel title="Cider House" subtitle="CF" tableClass="cf" month={month} year={year}>
       <CalcBox title="Low ABV"   rows={mkRows(calcCiderHouseCategory(lowCurrent, lowPrev))} />
       <CalcBox title="Sparkling" rows={mkRows(calcCiderHouseCategory(sparklingCurrent, sparklingPrev))} />
     </CalcPanel>
@@ -304,25 +507,82 @@ function TastingRoomCalc({ lowCurrent, lowPrev, sparklingCurrent, sparklingPrev,
   month: number; year: number;
 }) {
   const mkRows = (c: TRCalcResult): CalcRow[] => [
-    { label: "Starting Inventory",        value: c.startingInventory },
-    { label: "Ending Inventory",          value: c.endingInventory },
-    { label: "Direct Sales Off-Premise",  value: c.directSalesOffPremise },
-    { label: "Adjusted Bottle Sales",     value: c.adjustedBottleSales, derived: true },
-    { label: "Direct Sales On-Premise",   value: c.directSalesOnPremise },
-    { label: "Transfer",                  value: c.transfer },
+    { label: "Starting Inventory",       value: c.startingInventory },
+    { label: "Ending Inventory",         value: c.endingInventory },
+    { label: "Direct Sales Off-Premise", value: c.directSalesOffPremise },
+    { label: "Adjusted Bottle Sales",    value: c.adjustedBottleSales, derived: true },
+    { label: "Direct Sales On-Premise",  value: c.directSalesOnPremise },
+    { label: "Transfer",                 value: c.transfer },
   ];
   return (
-    <CalcPanel title="Tasting Room" month={month} year={year}>
+    <CalcPanel title="Tasting Room" subtitle="CV" tableClass="cv" month={month} year={year}>
       <CalcBox title="Low ABV"   rows={mkRows(calcTastingRoomCategory(lowCurrent, lowPrev))} />
       <CalcBox title="Sparkling" rows={mkRows(calcTastingRoomCategory(sparklingCurrent, sparklingPrev))} />
     </CalcPanel>
   );
 }
 
+function CalcPanel({ title, subtitle, tableClass, month, year, children }: {
+  title: string; subtitle: string; tableClass: string; month: number; year: number; children: ReactNode;
+}) {
+  return (
+    <div>
+      <div style={{
+        display: "flex", justifyContent: "space-between", alignItems: "baseline",
+        padding: "0 2px 6px",
+      }}>
+        <span style={{
+          fontFamily: "var(--sans)",
+          fontSize: 10,
+          letterSpacing: "0.22em",
+          textTransform: "uppercase" as const,
+          color: "var(--ink-mute)",
+          fontWeight: 700,
+        }}>
+          {title}
+        </span>
+        <span style={{
+          fontFamily: "var(--mono)",
+          fontSize: 9,
+          letterSpacing: "0.1em",
+          color: tableClass === "cf" ? "var(--terracotta-deep)" : "var(--gold-deep)",
+          fontWeight: 600,
+          textTransform: "uppercase" as const,
+        }}>
+          {subtitle}
+        </span>
+      </div>
+      <div className={`sidetable ${tableClass}`} style={{ marginBottom: 8 }}>
+        <div className="head">
+          <div className="t">TABC Compliance</div>
+          <div className="sub">{MONTHS_SHORT[month - 1]} {year}</div>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function CalcBox({ title, rows }: { title: string; rows: CalcRow[] }) {
+  return (
+    <>
+      <div className="sec">{title}</div>
+      {rows.map(({ label, value, derived }) => (
+        <div key={label} className={`row ${derived ? "derived" : ""}`}>
+          <span className="k">{label}</span>
+          <span className="v">
+            {value.toFixed(2)}
+            <span className="unit">gal</span>
+          </span>
+        </div>
+      ))}
+    </>
+  );
+}
+
 // ─── Category table ───────────────────────────────────────────────────────────
 
 function CategoryTable(props: {
-  title: string;
   rows: EntryRow[];
   columns: { key: EntryFieldKey; label: string }[];
   location: Location;
@@ -332,7 +592,7 @@ function CategoryTable(props: {
   saving: boolean;
   locked: boolean;
 }) {
-  const { title, rows, columns, location, year, month, onSave, saving, locked } = props;
+  const { rows, columns, location, year, month, onSave, locked } = props;
 
   const totals = Object.fromEntries(
     columns.map((c) => [
@@ -342,46 +602,43 @@ function CategoryTable(props: {
   ) as Record<EntryFieldKey, number>;
 
   return (
-    <section className="bg-white border border-stone-200 rounded-lg overflow-hidden">
-      <header className="px-4 py-2.5 border-b border-stone-200 bg-stone-50 flex justify-between items-center">
-        <h2 className="font-medium">{title}</h2>
-        {locked
-          ? <span className="text-xs text-amber-600 font-medium">🔒 Read-only</span>
-          : saving && <span className="text-xs text-stone-500">Saving…</span>
-        }
-      </header>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-stone-50 text-stone-600 text-xs uppercase">
-            <tr>
-              <th className="text-left px-3 py-2 sticky left-0 bg-stone-50">Cider</th>
-              {columns.map((c) => (
-                <th key={c.key} className="text-right px-3 py-2 whitespace-nowrap">{c.label}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <CiderRow key={`${r.cider.id}-${year}-${month}`} row={r} columns={columns} location={location} year={year} month={month} onSave={onSave} locked={locked} />
-            ))}
-          </tbody>
-          <tfoot className="border-t-2 border-stone-300 bg-stone-50 text-sm">
-            <tr className="font-semibold">
-              <td className="px-3 py-1.5 sticky left-0 bg-stone-50 text-stone-700">Total</td>
-              {columns.map((c) => (
-                <td key={c.key} className="px-3 py-1.5 text-right">{totals[c.key]}</td>
-              ))}
-            </tr>
-            <tr className="text-stone-500 text-xs border-t border-stone-200">
-              <td className="px-3 py-1.5 sticky left-0 bg-stone-50">Amount (gal)</td>
-              {columns.map((c) => (
-                <td key={c.key} className="px-3 py-1.5 text-right">{colGallons(c.key, totals[c.key]).toFixed(2)}</td>
-              ))}
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-    </section>
+    <table className="htable">
+      <thead>
+        <tr>
+          <th style={{ textAlign: "left" }}>Cider</th>
+          {columns.map((c) => (
+            <th key={c.key}>{c.label}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r) => (
+          <CiderRow
+            key={`${r.cider.id}-${year}-${month}`}
+            row={r}
+            columns={columns}
+            location={location}
+            year={year} month={month}
+            onSave={onSave}
+            locked={locked}
+          />
+        ))}
+      </tbody>
+      <tfoot>
+        <tr className="total-row">
+          <td>Total</td>
+          {columns.map((c) => (
+            <td key={c.key}>{totals[c.key]}</td>
+          ))}
+        </tr>
+        <tr>
+          <td>Amount (gal)</td>
+          {columns.map((c) => (
+            <td key={c.key}>{colGallons(c.key, totals[c.key]).toFixed(2)}</td>
+          ))}
+        </tr>
+      </tfoot>
+    </table>
   );
 }
 
@@ -411,21 +668,16 @@ function CiderRow(props: {
   }
 
   return (
-    <tr className="border-t border-stone-100 hover:bg-stone-50/50">
-      <td className="px-3 py-1.5 sticky left-0 bg-white font-medium">{row.cider.name}</td>
+    <tr className={locked ? "locked-row" : ""}>
+      <td>{row.cider.name}</td>
       {columns.map((c) => (
-        <td key={c.key} className="px-1 py-1">
+        <td key={c.key} style={{ padding: "8px 10px" }}>
           <input
             type="number"
             min={0}
             defaultValue={values[c.key]}
             onBlur={(e) => blur(c.key, e.target.value)}
             disabled={locked}
-            className={`w-20 text-right px-2 py-1 rounded border focus:outline-none ${
-              locked
-                ? "border-stone-100 bg-stone-50 text-stone-400 cursor-not-allowed"
-                : "border-stone-200 focus:border-stone-500"
-            }`}
           />
         </td>
       ))}
@@ -447,4 +699,36 @@ function buildInitial(row: EntryRow): Record<EntryFieldKey, number> {
     transfersOutBottles:  e?.transfersOutBottles  ?? 0,
     transfersOutKegs:     e?.transfersOutKegs     ?? 0,
   };
+}
+
+// ─── Month strip ──────────────────────────────────────────────────────────────
+
+function MonthStrip({ year, activeMonth, onSelect, onPrevYear, onNextYear }: {
+  year: number;
+  activeMonth: number; // 0-indexed
+  onSelect: (monthIndex: number) => void;
+  onPrevYear: () => void;
+  onNextYear: () => void;
+}) {
+  const now    = new Date();
+  const nowY   = now.getFullYear();
+  const nowM   = now.getMonth();
+
+  return (
+    <div className="monthstrip">
+      <span className="yr">{year}</span>
+      {MONTHS_SHORT.map((m, i) => {
+        const future = year > nowY || (year === nowY && i > nowM);
+        return (
+          <span
+            key={m}
+            className={`m ${i === activeMonth ? "active" : ""} ${future ? "future" : ""}`}
+            onClick={() => !future && onSelect(i)}
+          >
+            {m}
+          </span>
+        );
+      })}
+    </div>
+  );
 }

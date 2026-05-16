@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type Cider } from "../api";
 
@@ -28,50 +27,60 @@ export default function AdminCiders() {
     },
   });
 
-  if (isLoading || !ciders) return <p>Loading…</p>;
+  if (isLoading || !ciders) {
+    return (
+      <div style={{ padding: "40px 36px", fontFamily: "var(--sans)", color: "var(--ink-3)" }}>
+        Loading…
+      </div>
+    );
+  }
 
-  const low = ciders.filter((c) => c.category === "low");
+  const low      = ciders.filter((c) => c.category === "low");
   const sparkling = ciders.filter((c) => c.category === "sparkling");
 
   return (
-    <div className="space-y-8">
-      <div>
-        <Link to="/" className="text-sm text-stone-500 hover:underline">← Home</Link>
-        <h1 className="text-2xl font-semibold mt-1">Admin — Ciders</h1>
-        <p className="text-sm text-stone-500 mt-1">
-          Inactive ciders are hidden from entry grids but their historical data is preserved.
-          Deleting a cider permanently removes it and all its entry history.
-        </p>
+    <div>
+      {/* Topbar */}
+      <div className="hcc-topbar">
+        <div>
+          <div className="eyebrow">Operations · Admin</div>
+          <h1>Cider List</h1>
+          <div className="sub">
+            Inactive ciders are <em>hidden from entry grids</em> but history is preserved.
+            Deleting permanently removes all entry data.
+          </div>
+        </div>
       </div>
 
-      <CiderSection
-        title="Low ABV"
-        category="low"
-        ciders={low}
-        onAdd={(name) => create.mutate({ name, category: "low" })}
-        onToggleActive={(id, active) => toggleActive.mutate({ id, active })}
-        onDelete={(id) => deleteCider.mutate(id)}
-        adding={create.isPending}
-        deleting={deleteCider.isPending ? deleteCider.variables : null}
-      />
+      <div className="hcc-content">
+        <CiderSection
+          title="Low ABV"
+          category="low"
+          ciders={low}
+          onAdd={(name) => create.mutate({ name, category: "low" })}
+          onToggleActive={(id, active) => toggleActive.mutate({ id, active })}
+          onDelete={(id) => deleteCider.mutate(id)}
+          adding={create.isPending}
+          deleting={deleteCider.isPending ? deleteCider.variables : null}
+        />
 
-      <CiderSection
-        title="Sparkling"
-        category="sparkling"
-        ciders={sparkling}
-        onAdd={(name) => create.mutate({ name, category: "sparkling" })}
-        onToggleActive={(id, active) => toggleActive.mutate({ id, active })}
-        onDelete={(id) => deleteCider.mutate(id)}
-        adding={create.isPending}
-        deleting={deleteCider.isPending ? deleteCider.variables : null}
-      />
+        <CiderSection
+          title="Sparkling"
+          category="sparkling"
+          ciders={sparkling}
+          onAdd={(name) => create.mutate({ name, category: "sparkling" })}
+          onToggleActive={(id, active) => toggleActive.mutate({ id, active })}
+          onDelete={(id) => deleteCider.mutate(id)}
+          adding={create.isPending}
+          deleting={deleteCider.isPending ? deleteCider.variables : null}
+        />
+      </div>
     </div>
   );
 }
 
 function CiderSection({
   title,
-  category,
   ciders,
   onAdd,
   onToggleActive,
@@ -109,84 +118,139 @@ function CiderSection({
   }
 
   return (
-    <section className="bg-white border border-stone-200 rounded-lg overflow-hidden">
-      <header className="px-4 py-2.5 border-b border-stone-200 bg-stone-50">
-        <h2 className="font-medium">{title}</h2>
+    <section className="zone inv">
+      {/* Zone header */}
+      <header className="zone-head">
+        <div className="left">
+          <div>
+            <div className="zone-tag">Ciders · {title}</div>
+            <h2>{title} Varieties</h2>
+          </div>
+        </div>
+        <div style={{ color: "var(--text-3)", fontFamily: "var(--display)", fontStyle: "italic", fontSize: 13 }}>
+          {ciders.length} {ciders.length === 1 ? "variety" : "varieties"}
+        </div>
       </header>
 
-      <table className="w-full text-sm">
-        <thead className="bg-stone-50 text-stone-600 text-xs uppercase border-b border-stone-200">
-          <tr>
-            <th className="text-left px-4 py-2">Name</th>
-            <th className="text-center px-4 py-2 w-28">Active</th>
-            <th className="px-4 py-2 w-36"></th>
-          </tr>
-        </thead>
-        <tbody>
-          {ciders.map((c) => (
-            <tr key={c.id} className={`border-t border-stone-100 ${!c.active ? "opacity-50" : ""}`}>
-              <td className="px-4 py-2 font-medium">{c.name}</td>
-              <td className="px-4 py-2 text-center">
-                <button
-                  onClick={() => onToggleActive(c.id, !c.active)}
-                  className={`px-2 py-0.5 rounded text-xs font-medium ${
-                    c.active
-                      ? "bg-green-100 text-green-700 hover:bg-green-200"
-                      : "bg-stone-100 text-stone-500 hover:bg-stone-200"
-                  }`}
-                >
-                  {c.active ? "Active" : "Inactive"}
-                </button>
-              </td>
-              <td className="px-4 py-2 text-right">
-                {confirmDeleteId === c.id ? (
-                  <span className="inline-flex items-center gap-2">
-                    <span className="text-xs text-red-600">Delete and lose all history?</span>
-                    <button
-                      onClick={() => handleDelete(c)}
-                      disabled={deleting === c.id}
-                      className="px-2 py-0.5 rounded text-xs bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
-                    >
-                      Yes, delete
-                    </button>
-                    <button
-                      onClick={() => setConfirmDeleteId(null)}
-                      className="px-2 py-0.5 rounded text-xs border border-stone-300 hover:bg-stone-100"
-                    >
-                      Cancel
-                    </button>
-                  </span>
-                ) : (
-                  <button
-                    onClick={() => setConfirmDeleteId(c.id)}
-                    className="px-2 py-0.5 rounded text-xs border border-stone-200 text-stone-500 hover:border-red-300 hover:text-red-600"
-                  >
-                    Delete
-                  </button>
-                )}
-              </td>
+      {/* Table */}
+      <div className="zone-body tight">
+        <table className="htable">
+          <thead>
+            <tr>
+              <th style={{ textAlign: "left" }}>Name</th>
+              <th style={{ textAlign: "center", width: 100 }}>Status</th>
+              <th style={{ width: 200 }}></th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {ciders.length === 0 && (
+              <tr>
+                <td
+                  colSpan={3}
+                  style={{
+                    textAlign: "center",
+                    padding: "28px 16px",
+                    color: "var(--ink-mute)",
+                    fontFamily: "var(--display)",
+                    fontStyle: "italic",
+                    fontSize: 15,
+                  }}
+                >
+                  No ciders yet — add one below.
+                </td>
+              </tr>
+            )}
+            {ciders.map((c) => (
+              <tr key={c.id} style={{ opacity: c.active ? 1 : 0.5 }}>
+                <td style={{ textAlign: "left" }}>{c.name}</td>
+                <td style={{ textAlign: "center" }}>
+                  <button
+                    className={`hcc-btn sm ${c.active ? "gold" : "ghost"}`}
+                    onClick={() => onToggleActive(c.id, !c.active)}
+                    style={{ minWidth: 80 }}
+                  >
+                    {c.active ? "Active" : "Inactive"}
+                  </button>
+                </td>
+                <td style={{ textAlign: "right", padding: "8px 14px" }}>
+                  {confirmDeleteId === c.id ? (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                      <span style={{
+                        fontSize: 11,
+                        color: "var(--terracotta-deep)",
+                        fontFamily: "var(--sans)",
+                        fontWeight: 600,
+                        letterSpacing: "0.04em",
+                      }}>
+                        Delete and lose all history?
+                      </span>
+                      <button
+                        className="hcc-btn sm danger"
+                        onClick={() => handleDelete(c)}
+                        disabled={deleting === c.id}
+                      >
+                        Yes, delete
+                      </button>
+                      <button
+                        className="hcc-btn sm ghost"
+                        onClick={() => setConfirmDeleteId(null)}
+                      >
+                        Cancel
+                      </button>
+                    </span>
+                  ) : (
+                    <button
+                      className="hcc-btn sm ghost"
+                      onClick={() => setConfirmDeleteId(c.id)}
+                      style={{ color: "var(--ink-3)" }}
+                    >
+                      Delete
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
 
-      <div className="border-t border-stone-200 px-4 py-3 bg-stone-50">
-        <form onSubmit={handleAdd} className="flex items-center gap-2">
-          <input
-            type="text"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            placeholder={`Add ${title} cider…`}
-            className="flex-1 px-3 py-1.5 rounded border border-stone-300 text-sm focus:border-stone-500 focus:outline-none"
-          />
-          <button
-            type="submit"
-            disabled={adding || !newName.trim()}
-            className="px-4 py-1.5 rounded bg-stone-900 text-white text-sm hover:bg-stone-800 disabled:opacity-50"
-          >
-            Add
-          </button>
-        </form>
+        {/* Add form */}
+        <div style={{
+          borderTop: "1px solid var(--rule)",
+          padding: "16px 24px",
+          background: "var(--cream-deep)",
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+        }}>
+          <form onSubmit={handleAdd} style={{ display: "flex", gap: 10, flex: 1, alignItems: "center" }}>
+            <span style={{
+              fontFamily: "var(--sans)",
+              fontSize: 10,
+              letterSpacing: "0.2em",
+              textTransform: "uppercase",
+              color: "var(--ink-mute)",
+              fontWeight: 700,
+              whiteSpace: "nowrap",
+            }}>
+              ✦ Add
+            </span>
+            <input
+              type="text"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder={`New variety name…`}
+              className="hcc-input"
+              style={{ flex: 1 }}
+            />
+            <button
+              type="submit"
+              className="hcc-btn primary"
+              disabled={adding || !newName.trim()}
+            >
+              Add Cider
+            </button>
+          </form>
+        </div>
       </div>
     </section>
   );
